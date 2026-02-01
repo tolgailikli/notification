@@ -1,0 +1,246 @@
+openapi: 3.0.3
+info:
+  title: Notification API
+  description: Create, batch, list, get, and cancel notifications (SMS, Email, Push).
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local (Docker)
+
+tags:
+  - name: Notifications
+    description: Notification CRUD and list
+
+paths:
+  /api/notifications:
+    post:
+      tags: [Notifications]
+      summary: Create a single notification
+      operationId: createNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+      responses:
+        '202':
+          description: Created
+          headers:
+            X-Correlation-ID:
+              schema: { type: string }
+              description: Request correlation ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateNotificationResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+    get:
+      tags: [Notifications]
+      summary: List notifications (paginated, filterable)
+      operationId: listNotifications
+      parameters:
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 15 }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: batch_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, processing, sent, failed, cancelled] }
+        - name: channel
+          in: query
+          schema: { type: string, enum: [sms, email, push] }
+        - name: from
+          in: query
+          description: Filter by created_at >= (ISO8601)
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Filter by created_at <= (ISO8601)
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNotificationsResponse'
+
+  /api/notifications/batch:
+    post:
+      tags: [Notifications]
+      summary: Create up to 1000 notifications in a batch
+      operationId: createBatchNotifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBatchNotificationRequest'
+      responses:
+        '202':
+          description: Created
+          headers:
+            X-Correlation-ID:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateBatchNotificationResponse'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+  /api/notifications/{id}:
+    get:
+      tags: [Notifications]
+      summary: Get a notification by ID or UUID
+      operationId: getNotificationById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Notification found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+    delete:
+      tags: [Notifications]
+      summary: Cancel a pending notification
+      operationId: cancelNotification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, example: cancelled }
+        '404':
+          description: Not found or cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+
+components:
+  schemas:
+    CreateNotificationRequest:
+      type: object
+      required: [to, channel, content]
+      properties:
+        to: { type: string, maxLength: 255, description: Recipient (phone, email, etc.) }
+        channel: { type: string, enum: [sms, email, push] }
+        content: { type: string, minLength: 1 }
+        priority: { type: string, enum: [high, normal, low], default: normal }
+        idempotency_key: { type: string, maxLength: 128 }
+        scheduled_at: { type: string, format: date-time, description: ISO8601, must be after now }
+
+    CreateNotificationResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        batch_id: { type: string, nullable: true }
+        status: { type: string, example: pending }
+        created_at: { type: string, format: date-time }
+
+    CreateBatchNotificationRequest:
+      type: object
+      required: [notifications]
+      properties:
+        notifications:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/CreateNotificationRequest'
+
+    CreateBatchNotificationResponse:
+      type: object
+      properties:
+        batch_id: { type: string, format: uuid }
+        count: { type: integer }
+        notifications:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              status: { type: string }
+              created_at: { type: string, format: date-time }
+
+    ListNotificationsResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        meta:
+          type: object
+          properties:
+            current_page: { type: integer }
+            last_page: { type: integer }
+            per_page: { type: integer }
+            total: { type: integer }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        batch_id: { type: string, nullable: true }
+        recipient: { type: string }
+        channel: { type: string }
+        content: { type: string }
+        priority: { type: string }
+        status: { type: string }
+        scheduled_at: { type: string, format: date-time, nullable: true }
+        sent_at: { type: string, format: date-time, nullable: true }
+        provider_message_id: { type: string, nullable: true }
+        retry_count: { type: integer }
+        trace_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ValidationError:
+      type: object
+      properties:
+        message: { type: string }
+        errors: { type: object }
+
+    ErrorMessage:
+      type: object
+      properties:
+        message: { type: string }

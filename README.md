@@ -21,18 +21,74 @@ Laravel is a web application framework with expressive, elegant syntax. We belie
 
 Laravel is accessible, powerful, and provides tools required for large, robust applications.
 
+## Notification System (This Project)
+
+Scalable notification system: create, batch, list, get, and cancel notifications across **SMS**, **Email**, and **Push**.
+
+### Architecture Overview
+
+- **Create**: `POST /api/notifications` (single) and `POST /api/notifications/batch` (up to 1000).
+- **List**: `GET /api/notifications` with filters (`batch_id`, `status`, `channel`, `from`, `to`) and pagination (`per_page`, `page`).
+- **Get**: `GET /api/notifications/{id}` by UUID or numeric ID.
+- **Cancel**: `DELETE /api/notifications/{id}` for pending notifications.
+- **Idempotency**: Pass `idempotency_key` when creating to avoid duplicate records.
+- **Observability**: All API responses include `X-Correlation-ID`; use it in logs.
+- **404**: Non-existent routes return `404` with JSON `{"message":"Not found"}`.
+
+### API Documentation (OpenAPI / Swagger)
+
+See **[openapi.yaml](openapi.yaml)** for the full OpenAPI 3 spec. You can import it into Postman, Swagger UI, or any OpenAPI tool.
+
+### API Examples (curl)
+
+**Create a single notification**
+```bash
+curl -X POST http://localhost:8080/api/notifications \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"to":"+905551234567","channel":"sms","content":"Hello World"}'
+# 202 → { "id": "uuid", "status": "pending", "created_at": "..." }
+```
+
+**Create batch (up to 1000)**
+```bash
+curl -X POST http://localhost:8080/api/notifications/batch \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{"notifications":[{"to":"+905551234567","channel":"sms","content":"Hi"},{"to":"user@example.com","channel":"email","content":"Welcome"}]}'
+# 202 → { "batch_id": "uuid", "count": 2, "notifications": [...] }
+```
+
+**List notifications (with filters and pagination)**
+```bash
+curl "http://localhost:8080/api/notifications?status=pending&channel=sms&per_page=20&page=1" \
+  -H "Accept: application/json"
+# 200 → { "data": [...], "meta": { "current_page", "last_page", "per_page", "total" } }
+```
+
+**Get by ID or UUID**
+```bash
+curl http://localhost:8080/api/notifications/{uuid} -H "Accept: application/json"
+# 200 → full notification object
+```
+
+**Cancel pending notification**
+```bash
+curl -X DELETE http://localhost:8080/api/notifications/{uuid} -H "Accept: application/json"
+# 200 → { "id": "uuid", "status": "cancelled" }
+```
+
+Optional fields when creating: `priority` (high, normal, low), `idempotency_key`, `scheduled_at` (ISO8601).
+
 ## Docker
 
 The project includes Docker support with PHP 8.4-FPM, Nginx, MySQL 8, and phpMyAdmin.
 
-**Project path:** `~/Documents/GitHub/notification` (or `Documents/GitHub/notification` relative to your home folder).
-
-**Requirements:** Docker and Docker Compose.
+**Requirements:** Docker and Docker Compose. Run commands from the project root.
 
 **Start all services:**
 
 ```bash
-cd ~/Documents/GitHub/notification
 docker compose up -d --build
 ```
 
@@ -44,16 +100,41 @@ docker compose up -d --build
 
 **First-time setup (run migrations):**
 
+Run migrations **inside the app container** (so `DB_HOST=mysql` resolves):
+
 ```bash
-cd ~/Documents/GitHub/notification
-docker compose exec app php artisan migrate
+docker compose exec app php artisan migrate --force
 ```
+
+If you get "Connection refused", wait 20–30 seconds for MySQL to finish starting, then run the command again.
+
+- Ensure `.env` has `DB_HOST=mysql` when using Docker (or copy from `.env.example`).
+- Do **not** run `php artisan migrate` on your host; use `docker compose exec app php artisan migrate`.
 
 **Stop:**
 
 ```bash
-cd ~/Documents/GitHub/notification
 docker compose down
+```
+
+**Fresh start (reset everything):**
+
+When you want to start from scratch (clean containers, clean database, run migrations again):
+
+```bash
+# Stop and remove containers + volumes (wipes MySQL data)
+docker compose down -v
+# Start again and run migrations
+docker compose up -d --build
+docker compose exec app php artisan migrate --force
+```
+
+**Only reset the database (keep containers):**
+
+If containers are already running and you just want to drop all tables and re-run migrations:
+
+```bash
+docker compose exec app php artisan migrate:fresh --force
 ```
 
 ## Testing
@@ -63,9 +144,8 @@ docker compose down
 Start the app with Docker, then open it in your browser:
 
 ```bash
-cd ~/Documents/GitHub/notification
 docker compose up -d --build
-docker compose exec app php artisan migrate
+docker compose exec app php artisan migrate --force
 ```
 
 - **Laravel app:** http://localhost:8080 — you should see the Laravel welcome page.
@@ -76,7 +156,6 @@ docker compose exec app php artisan migrate
 Run the test suite inside the app container:
 
 ```bash
-cd ~/Documents/GitHub/notification
 docker compose exec app php artisan test
 ```
 
@@ -91,11 +170,17 @@ Tests use an in-memory SQLite database (configured in `phpunit.xml`), so no extr
 **Run tests locally** (if you have PHP 8.4+ and Composer installed):
 
 ```bash
-cd ~/Documents/GitHub/notification
 composer install
 cp .env.example .env
 php artisan key:generate
+php artisan migrate --force
 php artisan test
+```
+
+**Run notification API tests only** (covers create, batch, list, get by ID, cancel, validation, 404):
+
+```bash
+php artisan test tests/Feature/NotificationApiTest.php
 ```
 
 ## Learning Laravel
