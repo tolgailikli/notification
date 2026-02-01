@@ -41,6 +41,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationError'
+        '429':
+          description: Rate limit exceeded (max 100 messages per second per channel)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
 
     get:
       tags: [Notifications]
@@ -105,6 +111,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationError'
+        '429':
+          description: Rate limit exceeded (max 100 messages per second per channel)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
 
   /api/notifications/{id}:
     get:

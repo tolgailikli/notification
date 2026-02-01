@@ -261,4 +261,53 @@ class NotificationApiTest extends TestCase
         $response = $this->getJson('/api/nonexistent-route');
         $response->assertStatus(404)->assertJson(['message' => 'Not found']);
     }
+
+    // --- Rate limiting: max 100 messages per second per channel ---
+
+    public function test_rate_limit_returns_429_when_channel_exceeds_limit(): void
+    {
+        config(['notification.rate_limit.max_per_second_per_channel' => 2]);
+
+        $payload = ['to' => '+905551234567', 'channel' => 'sms', 'content' => 'Hi'];
+
+        $r1 = $this->postJson('/api/notifications', $payload);
+        $r2 = $this->postJson('/api/notifications', $payload);
+        $r3 = $this->postJson('/api/notifications', $payload);
+
+        $r1->assertStatus(202);
+        $r2->assertStatus(202);
+        $r3->assertStatus(429)
+            ->assertJsonPath('message', 'Rate limit exceeded. Maximum 2 messages per second per channel.');
+    }
+
+    public function test_rate_limit_batch_returns_429_when_channel_exceeds_limit(): void
+    {
+        config(['notification.rate_limit.max_per_second_per_channel' => 2]);
+
+        $items = [
+            ['to' => '+905551234567', 'channel' => 'sms', 'content' => '1'],
+            ['to' => '+905551234568', 'channel' => 'sms', 'content' => '2'],
+            ['to' => '+905551234569', 'channel' => 'sms', 'content' => '3'],
+        ];
+
+        $response = $this->postJson('/api/notifications/batch', ['notifications' => $items]);
+
+        $response->assertStatus(429)
+            ->assertJsonPath('message', 'Rate limit exceeded. Maximum 2 messages per second per channel.');
+        $this->assertDatabaseCount('notifications', 0);
+    }
+
+    public function test_rate_limit_batch_under_limit_succeeds(): void
+    {
+        config(['notification.rate_limit.max_per_second_per_channel' => 10]);
+
+        $items = [
+            ['to' => '+905551234567', 'channel' => 'sms', 'content' => '1'],
+            ['to' => 'a@b.com', 'channel' => 'email', 'content' => '2'],
+        ];
+
+        $response = $this->postJson('/api/notifications/batch', ['notifications' => $items]);
+        $response->assertStatus(202)->assertJsonPath('count', 2);
+        $this->assertDatabaseCount('notifications', 2);
+    }
 }

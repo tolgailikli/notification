@@ -32,6 +32,7 @@ Scalable notification system: create, batch, list, get, and cancel notifications
 - **Get**: `GET /api/notifications/{id}` by UUID or numeric ID.
 - **Cancel**: `DELETE /api/notifications/{id}` for pending notifications.
 - **Idempotency**: Pass `idempotency_key` when creating to avoid duplicate records.
+- **Rate limiting**: Maximum **100 messages per second per channel** (sms, email, push), using Laravel's `RateLimiter` (limiters registered in `AppServiceProvider::boot()`). Set `CACHE_STORE=redis` in `.env` so the limiter uses Redis; with Docker Compose, Redis is included and the app is configured to use it. Configure limit via `NOTIFICATION_RATE_LIMIT_PER_CHANNEL` in `.env`.
 - **Observability**: All API responses include `X-Correlation-ID`; use it in logs.
 - **404**: Non-existent routes return `404` with JSON `{"message":"Not found"}`.
 
