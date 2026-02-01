@@ -20,7 +20,8 @@ services:
     networks:
       - notification-network
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
 
   nginx:
     image: nginx:alpine
@@ -52,6 +53,12 @@ services:
     networks:
       - notification-network
     command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootsecret"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   phpmyadmin:
     image: phpmyadmin:latest
