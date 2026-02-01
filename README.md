@@ -37,7 +37,8 @@ Scalable notification system: create, batch, list, get, and cancel notifications
 
 ### API Documentation (OpenAPI / Swagger)
 
-See **[openapi.yaml](openapi.yaml)** for the full OpenAPI 3 spec. You can import it into Postman, Swagger UI, or any OpenAPI tool.
+- **Swagger UI in the browser:** [http://localhost:8080/docs](http://localhost:8080/docs) (with the app running).
+- **Raw spec:** [openapi.yaml](openapi.yaml) — import into Postman or any OpenAPI tool.
 
 ### API Examples (curl)
 
