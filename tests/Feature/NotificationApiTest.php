@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Enums\NotificationStatus;
+use App\Jobs\SendNotificationToProviderJob;
 use App\Models\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Tests\TestCase;
 
@@ -130,6 +132,8 @@ class NotificationApiTest extends TestCase
 
         $batchId = $response->json('batch_id');
         $this->assertNotNull($batchId);
+
+        // Records created synchronously; send-to-provider is queued
         $this->assertDatabaseCount('notifications', 2);
         $this->assertEquals(2, Notification::where('batch_id', $batchId)->count());
         foreach ($response->json('notifications') as $n) {
@@ -153,6 +157,68 @@ class NotificationApiTest extends TestCase
     {
         $response = $this->postJson('/api/notifications/batch', []);
         $response->assertStatus(422)->assertJsonValidationErrors(['notifications']);
+    }
+
+    public function test_batch_create_creates_notifications_with_correct_data(): void
+    {
+        $items = [
+            ['to' => '+905551111111', 'channel' => 'sms', 'content' => 'SMS content'],
+            ['to' => 'batch@example.com', 'channel' => 'email', 'content' => 'Email content', 'priority' => 'high'],
+        ];
+
+        $response = $this->postJson('/api/notifications/batch', ['notifications' => $items]);
+        $response->assertStatus(202);
+
+        $batchId = $response->json('batch_id');
+        $this->assertDatabaseCount('notifications', 2);
+        $this->assertDatabaseHas('notifications', [
+            'batch_id' => $batchId,
+            'recipient' => '+905551111111',
+            'channel' => 'sms',
+            'content' => 'SMS content',
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseHas('notifications', [
+            'batch_id' => $batchId,
+            'recipient' => 'batch@example.com',
+            'channel' => 'email',
+            'content' => 'Email content',
+            'priority' => 'high',
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_batch_create_dispatches_send_to_provider_job_for_each_notification(): void
+    {
+        $items = [
+            ['to' => '+905552222222', 'channel' => 'sms', 'content' => 'One'],
+            ['to' => 'two@example.com', 'channel' => 'email', 'content' => 'Two'],
+            ['to' => 'push-token-xyz', 'channel' => 'push', 'content' => 'Three'],
+        ];
+
+        $this->postJson('/api/notifications/batch', ['notifications' => $items]);
+
+        // create() is called per item and dispatches SendNotificationToProviderJob for each
+        $sendJobs = Queue::pushed(SendNotificationToProviderJob::class);
+        $this->assertCount(3, $sendJobs, 'Batch create should dispatch one SendNotificationToProviderJob per notification');
+    }
+
+    public function test_batch_with_single_item_creates_one_notification(): void
+    {
+        $items = [
+            ['to' => '+905553333333', 'channel' => 'sms', 'content' => 'Single item batch'],
+        ];
+
+        $response = $this->postJson('/api/notifications/batch', ['notifications' => $items]);
+        $response->assertStatus(202)->assertJsonPath('count', 1);
+        $this->assertNotEmpty($response->json('batch_id'));
+
+        $this->assertDatabaseCount('notifications', 1);
+        $n = Notification::first();
+        $this->assertSame('+905553333333', $n->recipient);
+        $this->assertSame('sms', $n->channel);
+        $this->assertSame('Single item batch', $n->content);
+        $this->assertNotNull($n->batch_id);
     }
 
     // --- GET /api/notifications (list) ---

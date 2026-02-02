@@ -131,6 +131,17 @@ class NotificationService
         }
 
         $batchId = Str::uuid()->toString();
+        $result = $this->processBatch($items, $batchId, $correlationId);
+
+        return [
+            'batch_id' => $result['batch_id'],
+            'count' => count($result['notifications']),
+            'notifications' => $result['notifications'],
+        ];
+    }
+
+    public function processBatch(array $items, string $batchId, ?string $correlationId = null): array
+    {
         $notifications = [];
 
         foreach ($items as $item) {

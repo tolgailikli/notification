@@ -36,7 +36,7 @@ class NotificationController extends Controller
 
         return response()->json([
             'batch_id' => $result['batch_id'],
-            'count' => count($result['notifications']),
+            'count' => $result['count'],
             'notifications' => array_map(fn (Notification $n) => [
                 'id' => $n->uuid,
                 'status' => $n->status,
