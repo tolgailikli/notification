@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\NotificationStatus;
 use App\Models\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\RateLimiter;
 use Tests\TestCase;
 
 class NotificationApiTest extends TestCase
@@ -267,6 +268,9 @@ class NotificationApiTest extends TestCase
     public function test_rate_limit_returns_429_when_channel_exceeds_limit(): void
     {
         config(['notification.rate_limit.max_per_second_per_channel' => 2]);
+
+        // Clear rate limit so previous tests don't leave sms count in cache
+        RateLimiter::clear(md5('notification-sms' . 'sms'));
 
         $payload = ['to' => '+905551234567', 'channel' => 'sms', 'content' => 'Hi'];
 

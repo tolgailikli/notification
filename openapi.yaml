@@ -11,8 +11,71 @@ servers:
 tags:
   - name: Notifications
     description: Notification CRUD and list
+  - name: Observability
+    description: Metrics, health, and monitoring
 
 paths:
+  /api/metrics:
+    get:
+      tags: [Observability]
+      summary: Real-time metrics
+      description: Queue depth, notification success/failure rates, average send latency (last 24h).
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queue:
+                    type: object
+                    properties:
+                      depth_by_queue: { type: object, additionalProperties: { type: integer } }
+                      total_pending: { type: integer }
+                      failed_jobs: { type: integer }
+                  notifications:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      by_status: { type: object }
+                      success_rate_percent: { type: number, nullable: true }
+                      failure_rate_percent: { type: number, nullable: true }
+                  latency:
+                    type: object
+                    properties:
+                      avg_send_latency_seconds: { type: number, nullable: true }
+                  timestamp: { type: string, format: date-time }
+
+  /api/health:
+    get:
+      tags: [Observability]
+      summary: Health check
+      description: Database and cache connectivity. 200 = ok, 503 = degraded.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  checks: { type: object }
+                  timestamp: { type: string, format: date-time }
+        '503':
+          description: Degraded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [degraded] }
+                  checks: { type: object }
+                  timestamp: { type: string, format: date-time }
+
   /api/notifications:
     post:
       tags: [Notifications]

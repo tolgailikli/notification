@@ -65,7 +65,7 @@ class NotificationController extends Controller
             ->when($request->filled('to'), fn ($q) => $q->where('created_at', '<=', $request->to))
             ->orderByDesc('created_at');
 
-        $perPage = min((int) $request->get('per_page', 15), 100);
+        $perPage = max(1, min((int) $request->get('per_page', 15), 100));
         $paginated = $query->paginate($perPage);
 
         return response()->json([

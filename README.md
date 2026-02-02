@@ -34,8 +34,22 @@ Scalable notification system: create, batch, list, get, and cancel notifications
 - **Idempotency**: Pass `idempotency_key` when creating to avoid duplicate records.
 - **Async processing**: Notifications are sent to the external provider via queue workers (not synchronously). Pass `priority` as `high`, `normal`, or `low`; jobs are queued on `notifications-high`, `notifications-normal`, and `notifications-low`. The worker processes high first, then normal, then low.
 - **Rate limiting**: Maximum **100 messages per second per channel** (sms, email, push), using Laravel's `RateLimiter` (limiters registered in `AppServiceProvider::boot()`). Set `CACHE_STORE=redis` in `.env` so the limiter uses Redis; with Docker Compose, Redis is included and the app is configured to use it. Configure limit via `NOTIFICATION_RATE_LIMIT_PER_CHANNEL` in `.env`.
-- **Observability**: All API responses include `X-Correlation-ID`; use it in logs.
+- **Observability**: Real-time metrics (`GET /api/metrics`), health check (`GET /api/health`), and structured logging with correlation IDs (see below).
 - **404**: Non-existent routes return `404` with JSON `{"message":"Not found"}`.
+
+### Observability (metrics, health, logging)
+
+**Real-time metrics** — `GET /api/metrics`
+
+Returns JSON with queue depth (per queue, total pending, failed jobs), notification counts by status (sent, failed, pending, processing, cancelled), success/failure rates (%), and average send latency in seconds (created_at → sent_at, sent notifications, last 24h). Use for dashboards or alerting.
+
+**Health check** — `GET /api/health`
+
+Returns JSON with `status` (`ok` or `degraded`) and `checks` (database, cache). HTTP 200 when healthy, 503 when degraded. The framework also exposes `GET /up` for a simple up/down check.
+
+**Structured logging with correlation IDs**
+
+All API requests get a correlation ID: from the `X-Correlation-ID` request header or a generated UUID. The ID is set on the response as `X-Correlation-ID` and is added to the log context for the request via `Log::shareContext(['correlation_id' => $id])`, so every log line for that request includes `correlation_id`. Use it to trace a request across services or filter logs for a single flow.
 
 ### API Documentation (OpenAPI / Swagger)
 

@@ -1,9 +1,14 @@
 <?php
 
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\ObservabilityController;
 use App\Http\Controllers\Api\WebhookForwardController;
 use App\Http\Middleware\NotificationRateLimit;
 use Illuminate\Support\Facades\Route;
+
+// Observability
+Route::get('/metrics', [ObservabilityController::class, 'metrics']);
+Route::get('/health', [ObservabilityController::class, 'health']);
 
 // Webhook.site forward target: receive forwarded requests and return provider-style response
 Route::any('/webhook/forward', WebhookForwardController::class);
