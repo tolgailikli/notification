@@ -21,14 +21,51 @@ services:
       - DB_PASSWORD=secret
       - CACHE_STORE=redis
       - REDIS_HOST=redis
-      - NOTIFICATION_WEBHOOK_URL=${NOTIFICATION_WEBHOOK_URL:-}
+      - NOTIFICATION_WEBHOOK_URL=http://nginx/api/webhook/forward
       - NOTIFICATION_WEBHOOK_TIMEOUT=${NOTIFICATION_WEBHOOK_TIMEOUT:-10}
+      - QUEUE_CONNECTION=${QUEUE_CONNECTION:-database}
     networks:
       - notification-network
     depends_on:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_started
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notification-queue
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    env_file:
+      - .env
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - DB_CONNECTION=mysql
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_DATABASE=notification
+      - DB_USERNAME=notification
+      - DB_PASSWORD=secret
+      - CACHE_STORE=redis
+      - REDIS_HOST=redis
+      - NOTIFICATION_WEBHOOK_URL=http://nginx/api/webhook/forward
+      - NOTIFICATION_WEBHOOK_TIMEOUT=${NOTIFICATION_WEBHOOK_TIMEOUT:-10}
+      - QUEUE_CONNECTION=${QUEUE_CONNECTION:-database}
+    command: php artisan queue:work --queue=notifications-high,notifications-normal,notifications-low --tries=3 --sleep=1
+    networks:
+      - notification-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      app:
         condition: service_started
 
   nginx:

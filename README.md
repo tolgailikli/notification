@@ -32,6 +32,7 @@ Scalable notification system: create, batch, list, get, and cancel notifications
 - **Get**: `GET /api/notifications/{id}` by UUID or numeric ID.
 - **Cancel**: `DELETE /api/notifications/{id}` for pending notifications.
 - **Idempotency**: Pass `idempotency_key` when creating to avoid duplicate records.
+- **Async processing**: Notifications are sent to the external provider via queue workers (not synchronously). Pass `priority` as `high`, `normal`, or `low`; jobs are queued on `notifications-high`, `notifications-normal`, and `notifications-low`. The worker processes high first, then normal, then low.
 - **Rate limiting**: Maximum **100 messages per second per channel** (sms, email, push), using Laravel's `RateLimiter` (limiters registered in `AppServiceProvider::boot()`). Set `CACHE_STORE=redis` in `.env` so the limiter uses Redis; with Docker Compose, Redis is included and the app is configured to use it. Configure limit via `NOTIFICATION_RATE_LIMIT_PER_CHANNEL` in `.env`.
 - **Observability**: All API responses include `X-Correlation-ID`; use it in logs.
 - **404**: Non-existent routes return `404` with JSON `{"message":"Not found"}`.
@@ -82,6 +83,42 @@ curl -X DELETE http://localhost:8080/api/notifications/{uuid} -H "Accept: applic
 
 Optional fields when creating: `priority` (high, normal, low), `idempotency_key`, `scheduled_at` (ISO8601).
 
+### Queue and job priority
+
+**How it works**
+
+1. **API** – When you create a notification you can set `"priority": "high"`, `"normal"`, or `"low"` (default is `normal`).
+2. **Dispatch** – The job is pushed to a queue named by that priority:
+   - `high` → `notifications-high`
+   - `normal` → `notifications-normal`
+   - `low` → `notifications-low`
+3. **Worker** – A single worker is started with an ordered list of queues. It always takes the next job from the **first non-empty queue** in that list. So the order of queues is the priority order.
+
+**Current worker (Docker)**
+
+```bash
+php artisan queue:work --queue=notifications-high,notifications-normal,notifications-low
+```
+
+Meaning: process all jobs from `notifications-high` first, then `notifications-normal`, then `notifications-low`. So high-priority notifications are always handled before normal and low.
+
+**Ways to prioritize more**
+
+| Goal | Approach |
+|------|----------|
+| Keep current order (high → normal → low) | Use the command above (already in `docker-compose`). |
+| Give high priority even more capacity | Run a second worker that only processes high: `php artisan queue:work --queue=notifications-high`. |
+| Change priority order | Change the order in `--queue=`, e.g. `--queue=notifications-high,notifications-low,notifications-normal` to do low before normal. |
+| Process only one queue | Run `php artisan queue:work notifications-high` (or `notifications-normal` / `notifications-low`). |
+
+**Local (no Docker)**
+
+Run the same command so high is processed first:
+
+```bash
+php artisan queue:work --queue=notifications-high,notifications-normal,notifications-low
+```
+
 ## Docker
 
 The project includes Docker support with PHP 8.4-FPM, Nginx, MySQL 8, and phpMyAdmin.
@@ -100,23 +137,20 @@ docker compose up -d --build
 - **phpMyAdmin:** http://localhost:8081 (login: `notification` / `secret`, or root / `rootsecret`)  
 - **MySQL:** localhost:3306 (database: `notification`, user: `notification`, password: `secret`)
 
-**External provider (Webhook.site)**
+**External provider (development vs production)**
 
-The app uses [Webhook.site](https://webhook.site) as the external notification provider. Set `NOTIFICATION_WEBHOOK_URL` in `.env` to your Webhook.site URL (e.g. `https://webhook.site/{your-uuid}`). Create a URL at https://webhook.site and configure the expected response: status **202** with body `{ "messageId": "uuid-here", "status": "accepted", "timestamp": "ISO8601" }`.
+[Webhook.site](https://webhook.site) (e.g. `https://webhook.site/d49626cf-4804-4785-b64d-e9732dff3c0e`) has a **request limit**; when exceeded, it is not suitable for development. For development we use **`http://localhost:3457/api/webhook/forward`** to simulate the notification provider: the app sends to this local endpoint, which returns provider-style JSON (200/202, `messageId`, `status`, `timestamp`) with optional random delay and 80% accepted / 20% failed.
 
-**Forward Webhook.site to the Laravel app (localhost)**
+- **Development (Docker, recommended):** Set `NOTIFICATION_WEBHOOK_URL=http://nginx/api/webhook/forward` in `.env`. The app then sends to its own webhook-forward endpoint (no external calls). When running on the host (no Docker), use `http://localhost:3457/api/webhook/forward`; when `APP_ENV=local` and `NOTIFICATION_WEBHOOK_URL` is unset, that URL is the default.
+- **Production / Webhook.site:** Set `NOTIFICATION_WEBHOOK_URL=https://webhook.site/{your-uuid}`. If the provider returns **429 (rate limit)**, the app waits (using `Retry-After` header or a cooldown), then retries without counting as a failure; after other errors it retries with backoff.
 
-The app exposes a forward-target endpoint so Webhook.site can forward incoming requests to your local Laravel app. The app listens on port **3457** (in addition to 8080).
+**Forward target (local development with Webhook.site)**
 
-**Automatic:** A `whcli` service runs when you `docker compose up`, so webhook.site is forwarded to the Laravel app without running the CLI on your host.
+The app exposes `/api/webhook/forward`, which returns provider-style JSON (200/202, `messageId`, `status`, `timestamp`). For development you can either use the local forward URL above (no Webhook.site) or run the [webhook.site CLI](https://github.com/webhooksite/cli) so Webhook.site forwards to your app.
 
-**Manual (host):** To run the [webhook.site CLI](https://github.com/webhooksite/cli) on your host instead:
+**Automatic (Docker):** The `whcli` service runs on `docker compose up` and forwards Webhook.site traffic to the Laravel app.
 
-```bash
-whcli forward --token=d49626cf-4804-4785-b64d-e9732dff3c0e --target=http://localhost:3457/api/webhook/forward
-```
-
-Then set `NOTIFICATION_WEBHOOK_URL=https://webhook.site/d49626cf-4804-4785-b64d-e9732dff3c0e` in `.env`. Requests sent by the app to Webhook.site will be forwarded to `http://localhost:3457/api/webhook/forward`, which returns the provider-style JSON (202, `messageId`, `status: "accepted"`, `timestamp`).
+**Manual (host):** Run `whcli forward --token=... --target=http://localhost:3457/api/webhook/forward`. The app listens on port **3457** as well as 8080.
 
 **First-time setup (run migrations):**
 

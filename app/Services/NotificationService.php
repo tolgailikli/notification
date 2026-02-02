@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Enums\NotificationPriority;
 use App\Enums\NotificationStatus;
+use App\Exceptions\ProviderRateLimitException;
+use App\Jobs\SendNotificationToProviderJob;
 use App\Models\Notification;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
@@ -13,7 +15,7 @@ class NotificationService
 {
     const MAX_BATCH_SIZE = 1000;
     const MAX_RETRIES = 4;
-    const COOLDOWN = [3, 5, 8, 15];
+    const COOLDOWN_429 = [3, 5, 8, 15];
 
     public function create(array $data, ?string $traceId = null): Notification
     {
@@ -37,29 +39,23 @@ class NotificationService
             'trace_id' => $traceId,
         ]);
 
-        $this->sendToProvider($notification);
-        $notification->refresh();
+        SendNotificationToProviderJob::dispatch($notification->id)
+            ->onQueue($notification->getPriorityEnum()->queueName());
 
         return $notification;
     }
 
-    /**
-     * POST notification to external provider (e.g. Webhook.site).
-     * Request: { "to", "channel", "content" }
-     */
     public function sendToProvider(Notification $notification): Notification
     {
-        if ($notification->retry_count >= self::MAX_RETRIES) {
-            $notification->update(['status' => NotificationStatus::FAILED->value]);
-            return $notification;
-        }
-
         $url = config('notification.provider.url') ?: env('NOTIFICATION_WEBHOOK_URL', '');
-        $url = is_string($url) ? trim($url) : '';
-
         if (empty($url)) {
             return $notification;
         }
+
+        Log::info('Notification provider request', [
+            'notification_id' => $notification->uuid,
+            'provider_url' => $url,
+        ]);
 
         $timeout = (int) (config('notification.provider.timeout') ?: env('NOTIFICATION_WEBHOOK_TIMEOUT', 10));
         $payload = [
@@ -67,47 +63,65 @@ class NotificationService
             'channel' => $notification->channel,
             'content' => $notification->content,
         ];
-        $response = Http::timeout($timeout)->acceptJson()->post($url, $payload);
+
+        try {
+            $response = Http::timeout($timeout)->acceptJson()->post($url, $payload);
+        } catch (\Throwable $e) {
+            Log::warning('Notification provider request failed (timeout/connection)', [
+                'notification_id' => $notification->uuid,
+                'provider_url' => $url,
+                'timeout_seconds' => $timeout,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+
+        $statusCode = $response->status();
+        $body = $response->json();
+        $responseBody = $response->body();
+
         Log::info('Notification provider response', [
             'notification_id' => $notification->uuid,
-            'response' => $response,
+            'provider_url' => $url,
+            'http_status' => $statusCode,
+            'body' => $responseBody,
         ]);
-        $body = $response->json();
-        if (in_array($response->status(), [202, 200], true) &&
+
+        if ($statusCode === 429) {
+            $retryAfter = (int) $response->header('Retry-After');
+            $cooldown = $retryAfter > 0 ? $retryAfter : self::COOLDOWN_429[min($notification->retry_count, count(self::COOLDOWN_429) - 1)];
+            Log::warning('Notification provider rate limit (429)', [
+                'notification_id' => $notification->uuid,
+                'retry_after_header' => $response->header('Retry-After'),
+                'cooldown_seconds' => $cooldown,
+                'body' => $responseBody,
+            ]);
+            throw new ProviderRateLimitException($cooldown);
+        } elseif (in_array($statusCode, [200, 202], true) &&
             isset($body['status']) &&
             $body['status'] === 'accepted'
         ) {
             $sentAt = now();
-            if (isset($body['timestamp']) && !empty($body['timestamp'])) {
+            if (!empty($body['timestamp'])) {
                 try {
                     $sentAt = \Illuminate\Support\Carbon::parse($body['timestamp'])->toDateTime();
-                } catch (\Throwable) {  
+                } catch (\Throwable) {
                 }
             }
-
             $notification->update([
                 'provider_message_id' => $body['messageId'] ?? null,
                 'status' => NotificationStatus::SENT->value,
-                'sent_at' => $sentAt
+                'sent_at' => $sentAt,
             ]);
             return $notification;
-        } elseif ($response->status() == 429) {
-            $cooldown = self::COOLDOWN[$notification->retry_count];
-            Log::info('Cooldown webhook.site', [
-                'cooldown' => $cooldown
-            ]);
-            sleep($cooldown);
         }
-        sleep(2);
-        // retry
-        $notification->increment('retry_count');
-        $notification->update(['status' => NotificationStatus::PROCESSING->value]);
-        Log::warning('Notification provider non-202-200', [
+
+        Log::warning('Notification provider error', [
             'notification_id' => $notification->uuid,
-            'status' => $response->status(),
-            'body' => $response->body(),
+            'http_status' => $statusCode,
+            'body' => $responseBody,
         ]);
-        return $this->sendToProvider($notification);
+        return $notification;
     }
 
     public function createBatch(array $items, ?string $correlationId = null): array

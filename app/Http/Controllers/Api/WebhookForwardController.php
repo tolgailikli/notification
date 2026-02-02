@@ -17,18 +17,20 @@ class WebhookForwardController extends Controller
 {
     public function __invoke(Request $request): JsonResponse
     {
-        // Random delay 0.1–10 seconds before responding
-        // $delayMicroseconds = random_int(100_000, 10_000_000);
-        // usleep($delayMicroseconds);
+        // 20% probability: delay 10–15 seconds; otherwise no delay
+        $delaySeconds = 0;
+        if (random_int(1, 100) <= 20) {
+            $delaySeconds = random_int(10, 15);
+            sleep($delaySeconds);
+        }
 
-        $accepted = random_int(1, 100) <= 80; // 80% accepted, 20% failed
-        $status = $accepted ? 'accepted' : 'failed';
-        $httpStatus = $status == 'accepted' ? 202 : 500;
+        $status = random_int(1, 100) <= 80 ? 'accepted' : 'failed';
+        $httpStatus = $status === 'accepted' ? 202 : 500;
 
         Log::info('Webhook forward received', [
             'method' => $request->method(),
             'body' => $request->all(),
-            //'delay_seconds' => round($delayMicroseconds / 1_000_000, 2),
+            'delay_seconds' => $delaySeconds,
             'response_status' => $status,
             'http_status' => $httpStatus,
         ]);

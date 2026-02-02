@@ -41,6 +41,9 @@ WORKDIR /var/www/html
 # Copy application files
 COPY . .
 
+# Ensure .env exists before composer install so package:discover can run (config uses env())
+RUN test -f .env || cp .env.example .env
+
 # Copy and set entrypoint for first-run composer install when using volumes
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
