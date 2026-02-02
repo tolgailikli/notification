@@ -100,6 +100,24 @@ docker compose up -d --build
 - **phpMyAdmin:** http://localhost:8081 (login: `notification` / `secret`, or root / `rootsecret`)  
 - **MySQL:** localhost:3306 (database: `notification`, user: `notification`, password: `secret`)
 
+**External provider (Webhook.site)**
+
+The app uses [Webhook.site](https://webhook.site) as the external notification provider. Set `NOTIFICATION_WEBHOOK_URL` in `.env` to your Webhook.site URL (e.g. `https://webhook.site/{your-uuid}`). Create a URL at https://webhook.site and configure the expected response: status **202** with body `{ "messageId": "uuid-here", "status": "accepted", "timestamp": "ISO8601" }`.
+
+**Forward Webhook.site to the Laravel app (localhost)**
+
+The app exposes a forward-target endpoint so Webhook.site can forward incoming requests to your local Laravel app. The app listens on port **3457** (in addition to 8080).
+
+**Automatic:** A `whcli` service runs when you `docker compose up`, so webhook.site is forwarded to the Laravel app without running the CLI on your host.
+
+**Manual (host):** To run the [webhook.site CLI](https://github.com/webhooksite/cli) on your host instead:
+
+```bash
+whcli forward --token=d49626cf-4804-4785-b64d-e9732dff3c0e --target=http://localhost:3457/api/webhook/forward
+```
+
+Then set `NOTIFICATION_WEBHOOK_URL=https://webhook.site/d49626cf-4804-4785-b64d-e9732dff3c0e` in `.env`. Requests sent by the app to Webhook.site will be forwarded to `http://localhost:3457/api/webhook/forward`, which returns the provider-style JSON (202, `messageId`, `status: "accepted"`, `timestamp`).
+
 **First-time setup (run migrations):**
 
 Run migrations **inside the app container** (so `DB_HOST=mysql` resolves):
@@ -138,6 +156,24 @@ If containers are already running and you just want to drop all tables and re-ru
 ```bash
 docker compose exec app php artisan migrate:fresh --force
 ```
+
+**Viewing logs**
+
+Laravel writes logs to `storage/logs/laravel.log`. This includes provider responses (status code and body) when sending notifications to Webhook.site.
+
+- **With Docker:** tail the log file inside the app container:
+  ```bash
+  docker compose exec app tail -f storage/logs/laravel.log
+  ```
+  Or stream the app container’s output:
+  ```bash
+  docker compose logs -f app
+  ```
+
+- **Without Docker (local):** from the project root:
+  ```bash
+  tail -f storage/logs/laravel.log
+  ```
 
 ## Testing
 
