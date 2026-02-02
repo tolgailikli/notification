@@ -18,6 +18,8 @@ class SendNotificationToProviderJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public int $tries = 5;
+
     public int $backoff = 5;
 
     public function __construct(
